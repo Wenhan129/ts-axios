@@ -1,18 +1,82 @@
-import { AxiosRequestConfig } from './types';
-export default function xhr(config: AxiosRequestConfig): void {
-  const { data = null, url, method = 'get', headers } = config;
+import { AxiosRequestConfig, AxiosPromise, AxiosResponse } from './types';
+import { parseHeaders } from './helpers/headers';
+import { transformResponse } from './helpers/data';
+import { createError } from './helpers/error';
+export default function xhr(config: AxiosRequestConfig): AxiosPromise {
+  return new Promise((resolve, reject) => {
+    const { data = null, url, method = 'get', headers, responseType, timeout } = config;
 
-  const request = new XMLHttpRequest();
+    const request = new XMLHttpRequest();
 
-  request.open(method.toUpperCase(), url, true);
+    if (responseType) {
+      request.responseType = responseType;
+    }
 
-  Object.keys(headers).map(name => {
-    if (data === null && name.toLowerCase() === 'content-type') {
-      delete headers[name];
-    } else {
-      request.setRequestHeader(name, headers[name]);
+    if (timeout) {
+      request.timeout = timeout;
+    }
+
+    request.open(method.toUpperCase(), url, true);
+
+    // onreadystatechange function will be called multiple times once state change
+    request.onreadystatechange = () => {
+      if (request.readyState !== 4) {
+        // Not "done" yet
+        return;
+      }
+
+      if (request.status === 0) {
+        return;
+      }
+
+      const responseHeaders = parseHeaders(request.getAllResponseHeaders());
+
+      const responseData = responseType === 'text' ? request.responseText : request.response;
+
+      const response: AxiosResponse = {
+        data: responseData,
+        status: request.status,
+        statusText: request.statusText,
+        headers: responseHeaders,
+        config,
+        request
+      };
+
+      handleResponse(response);
+    };
+
+    request.onerror = function handleError() {
+      reject(createError('Network Error', config, null, request));
+    };
+
+    request.ontimeout = function handleTimeout() {
+      reject(createError(`Timeout of ${timeout} ms exceeded`, config, 'ECONNABORTED', request));
+    };
+
+    Object.keys(headers).map(name => {
+      if (data === null && name.toLowerCase() === 'content-type') {
+        delete headers[name];
+      } else {
+        request.setRequestHeader(name, headers[name]);
+      }
+    });
+
+    request.send(data);
+
+    function handleResponse(response: AxiosResponse): void {
+      if (response.status >= 200 && response.status < 300) {
+        resolve(response);
+      } else {
+        reject(
+          createError(
+            `Request failed with status code ${response.status}`,
+            config,
+            null,
+            request,
+            response
+          )
+        );
+      }
     }
   });
-
-  request.send(data);
 }
